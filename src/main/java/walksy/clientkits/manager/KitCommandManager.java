@@ -6,28 +6,36 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.RenderPipelines;
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.ingame.AbstractInventoryScreen;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.command.CommandSource;
+import net.minecraft.entity.EntityEquipment;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.inventory.StackWithSlot;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.storage.NbtReadView;
+import net.minecraft.storage.NbtWriteView;
+import net.minecraft.storage.ReadView;
 import net.minecraft.text.Text;
+import net.minecraft.util.ErrorReporter;
 import net.minecraft.util.Formatting;
 import net.minecraft.world.GameMode;
 import walksy.clientkits.main.ClientKitsMod;
 
-import java.io.File;
-import java.io.FilenameFilter;
 import java.util.List;
 
 
 public class KitCommandManager {
-
     public static boolean loadKit = false, shouldChangeBack = false;
     private static GameMode oldGM = null;
     private static String tempName = null;
@@ -80,7 +88,9 @@ public class KitCommandManager {
 
 
     void handleSaveCommand(CommandContext<FabricClientCommandSource> source, String name) {
-        KitManager.kits.put(name, source.getSource().getPlayer().getInventory().writeNbt(new NbtList()));
+        NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY);
+        source.getSource().getPlayer().getInventory().writeData(view.getListAppender(name, StackWithSlot.CODEC));
+        KitManager.kits.put(name, view.getNbt());
         ConfigManager.saveKitToFile(name);
         ClientKitsMod.debugMessage("§aSaved kit: " + name);
     }
@@ -95,16 +105,31 @@ public class KitCommandManager {
         }
     }
 
+    private static EntityEquipment getEquipment(PlayerInventory inventory) {
+        EntityEquipment equipment = new EntityEquipment();
+        equipment.put(EquipmentSlot.FEET, inventory.getStack(EquipmentSlot.FEET.getEntitySlotId()));
+        equipment.put(EquipmentSlot.LEGS, inventory.getStack(EquipmentSlot.LEGS.getEntitySlotId()));
+        equipment.put(EquipmentSlot.CHEST, inventory.getStack(EquipmentSlot.CHEST.getEntitySlotId()));
+        equipment.put(EquipmentSlot.HEAD, inventory.getStack(EquipmentSlot.HEAD.getEntitySlotId()));
+        return equipment;
+    }
+
+    private static ReadView.TypedListReadView<StackWithSlot> getKitTypedListView(PlayerEntity player, String name) {
+        return NbtReadView.create(ErrorReporter.EMPTY, player.getRegistryManager(), KitManager.kits.get(name)).getTypedListView(name, StackWithSlot.CODEC);
+    }
+
     void handlePreviewCommand(String name)
     {
         if (KitManager.kits.get(name) != null) {
-            PlayerInventory tempInv = new PlayerInventory(MinecraftClient.getInstance().player);
-            tempInv.readNbt(KitManager.kits.get(name));
+            ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            PlayerInventory tempInv = new PlayerInventory(player, getEquipment(player.getInventory()));
+            tempInv.readData(getKitTypedListView(player, name));
             MinecraftClient.getInstance().send(() -> MinecraftClient.getInstance().setScreen(new PreviewScreen(new PlayerScreenHandler(tempInv, true, MinecraftClient.getInstance().player), tempInv, name)));
         } else {
             ClientKitsMod.debugMessage("§cCannot find the kit '" + name + "' to preview.");
         }
     }
+
     public static void tick() {
         if (loadKit) {
             if (!tempSource.getSource().getPlayer().getAbilities().creativeMode) {
@@ -121,23 +146,26 @@ public class KitCommandManager {
                 }
             }
             if (!tempSource.getSource().getPlayer().getAbilities().creativeMode) return;
-            NbtList kit = KitManager.kits.get(tempName);
+            NbtCompound kit = KitManager.kits.get(tempName);
             if (kit == null) {
                 ClientKitsMod.debugMessage("§cKit not found.");
                 reset();
                 return;
             }
-            PlayerInventory tempInv = new PlayerInventory(tempSource.getSource().getPlayer());
-            tempInv.readNbt(kit);
+            PlayerEntity player = tempSource.getSource().getPlayer();
+            PlayerInventory tempInv = new PlayerInventory(player, getEquipment(player.getInventory()));
+            tempInv.readData(getKitTypedListView(player, tempName));
             List<Slot> slots = tempSource.getSource().getPlayer().playerScreenHandler.slots;
             for (int i = 0; i < slots.size(); i++) {
                 if (slots.get(i).inventory == tempSource.getSource().getPlayer().getInventory()) {
                     ItemStack existingItemStack = tempSource.getSource().getPlayer().getInventory().getStack(slots.get(i).getIndex());
                     if (!existingItemStack.isEmpty()) {
+                        player.playerScreenHandler.getSlot(i).setStackNoCallbacks(ItemStack.EMPTY);
                         tempSource.getSource().getClient().interactionManager.clickCreativeStack(ItemStack.EMPTY, i); //clear out old items
                     }
                     ItemStack itemStack = tempInv.getStack(slots.get(i).getIndex());
                     if (!itemStack.isEmpty()) {
+                        player.playerScreenHandler.getSlot(i).setStack(itemStack);
                         tempSource.getSource().getClient().interactionManager.clickCreativeStack(itemStack, i);
                     }
                 }
@@ -163,8 +191,7 @@ public class KitCommandManager {
         }
     }
 
-    static void reset()
-    {
+    static void reset() {
         loadKit = false;
         shouldChangeBack = false;
         tempName = null;
@@ -174,8 +201,7 @@ public class KitCommandManager {
     }
 
 
-    class PreviewScreen extends AbstractInventoryScreen<PlayerScreenHandler> {
-
+    static class PreviewScreen extends HandledScreen<PlayerScreenHandler> {
         public PreviewScreen(PlayerScreenHandler playerScreenHandler, PlayerInventory inventory, String name) {
             super(playerScreenHandler, inventory, Text.literal(name).styled(style -> style.withColor(Formatting.BOLD)));
             this.titleX = 80;
@@ -197,12 +223,12 @@ public class KitCommandManager {
         protected void drawBackground(DrawContext context, float delta, int mouseX, int mouseY) {
             int i = this.x;
             int j = this.y;
-            context.drawTexture(BACKGROUND_TEXTURE, this.x, this.y, 0, 0, this.backgroundWidth, this.backgroundHeight);
+            context.drawTexture(RenderPipelines.GUI_TEXTURED, BACKGROUND_TEXTURE, this.x, this.y, 0, 0, this.backgroundWidth, this.backgroundHeight, 256, 256);
             InventoryScreen.drawEntity(context, i + 26, j + 8, i + 75, j + 78, 30, 0.0625F, mouseX, mouseY, this.client.player);
         }
 
         @Override
-        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        public boolean mouseClicked(Click click, boolean doubled) {
             return false;
         }
     }

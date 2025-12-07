@@ -32,7 +32,7 @@ public class ConfigManager {
 
                 kitCompound.put(kitName, KitManager.kits.get(kitName));
 
-                dataCompound.putInt("DataVersion", SharedConstants.getGameVersion().getSaveVersion().getId());
+                dataCompound.putInt("DataVersion", SharedConstants.getGameVersion().dataVersion().id());
                 dataCompound.put("Kit", kitCompound);
 
                 File newFile = new File(configDir, kitName + ".dat");
@@ -57,7 +57,7 @@ public class ConfigManager {
             return;
         }
 
-        final int currentVersion = SharedConstants.getGameVersion().getSaveVersion().getId();
+        final int currentVersion = SharedConstants.getGameVersion().dataVersion().id();
         DataFixer dataFixer = MinecraftClient.getInstance().getDataFixer();
 
         for (File file : configDir.listFiles()) {
@@ -66,14 +66,14 @@ public class ConfigManager {
                 if (rootTag == null) {
                     continue;
                 }
-                final int fileVersion = rootTag.getInt("DataVersion");
+                final int fileVersion = rootTag.getInt("DataVersion").orElse(-1);
                 if (fileVersion < currentVersion) {
                     rootTag = (NbtCompound) dataFixer.update(TypeReferences.STRUCTURE, new Dynamic<>(NbtOps.INSTANCE, rootTag), fileVersion, currentVersion).getValue();
                 }
 
-                NbtCompound compoundTag = rootTag.getCompound("Kit");
+                NbtCompound compoundTag = rootTag.getCompound("Kit").get();
                 for (String key : compoundTag.getKeys()) {
-                    KitManager.kits.put(key, compoundTag.getList(key, NbtElement.COMPOUND_TYPE));
+                    KitManager.kits.put(key, compoundTag.getCompound(key).get());
                 }
             }
         }
