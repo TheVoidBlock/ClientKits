@@ -15,9 +15,9 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.command.CommandSource;
 import net.minecraft.entity.EntityEquipment;
-import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.inventory.Inventory;
 import net.minecraft.inventory.StackWithSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
@@ -26,6 +26,7 @@ import net.minecraft.screen.slot.Slot;
 import net.minecraft.storage.NbtReadView;
 import net.minecraft.storage.NbtWriteView;
 import net.minecraft.storage.ReadView;
+import net.minecraft.storage.WriteView;
 import net.minecraft.text.Text;
 import net.minecraft.util.ErrorReporter;
 import net.minecraft.util.Formatting;
@@ -89,7 +90,10 @@ public class KitCommandManager {
 
     void handleSaveCommand(CommandContext<FabricClientCommandSource> source, String name) {
         NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY);
-        source.getSource().getPlayer().getInventory().writeData(view.getListAppender(name, StackWithSlot.CODEC));
+        WriteView.ListAppender<StackWithSlot> list = view.getListAppender(name, StackWithSlot.CODEC);
+        PlayerInventory inventory = source.getSource().getPlayer().getInventory();
+        inventory.writeData(list);
+        writeEquipment(list, inventory);
         KitManager.kits.put(name, view.getNbt());
         ConfigManager.saveKitToFile(name);
         ClientKitsMod.debugMessage("§aSaved kit: " + name);
@@ -105,13 +109,18 @@ public class KitCommandManager {
         }
     }
 
-    private static EntityEquipment getEquipment(PlayerInventory inventory) {
-        EntityEquipment equipment = new EntityEquipment();
-        equipment.put(EquipmentSlot.FEET, inventory.getStack(EquipmentSlot.FEET.getEntitySlotId()));
-        equipment.put(EquipmentSlot.LEGS, inventory.getStack(EquipmentSlot.LEGS.getEntitySlotId()));
-        equipment.put(EquipmentSlot.CHEST, inventory.getStack(EquipmentSlot.CHEST.getEntitySlotId()));
-        equipment.put(EquipmentSlot.HEAD, inventory.getStack(EquipmentSlot.HEAD.getEntitySlotId()));
-        return equipment;
+    private static void writeEquipment(WriteView.ListAppender<StackWithSlot> list, PlayerInventory inventory) {
+        for(Integer equipmentSlot : PlayerInventory.EQUIPMENT_SLOTS.keySet()) {
+            list.add(new StackWithSlot(equipmentSlot, inventory.getStack(equipmentSlot)));
+        }
+    }
+
+    private static void readInventory(ReadView.TypedListReadView<StackWithSlot> list, Inventory inventory) {
+        inventory.clear();
+
+        for(StackWithSlot slot : list) {
+            inventory.setStack(slot.slot(), slot.stack());
+        }
     }
 
     private static ReadView.TypedListReadView<StackWithSlot> getKitTypedListView(PlayerEntity player, String name) {
@@ -122,8 +131,8 @@ public class KitCommandManager {
     {
         if (KitManager.kits.get(name) != null) {
             ClientPlayerEntity player = MinecraftClient.getInstance().player;
-            PlayerInventory tempInv = new PlayerInventory(player, getEquipment(player.getInventory()));
-            tempInv.readData(getKitTypedListView(player, name));
+            PlayerInventory tempInv = new PlayerInventory(player, new EntityEquipment());
+            readInventory(getKitTypedListView(player, name), tempInv);
             MinecraftClient.getInstance().send(() -> MinecraftClient.getInstance().setScreen(new PreviewScreen(new PlayerScreenHandler(tempInv, true, MinecraftClient.getInstance().player), tempInv, name)));
         } else {
             ClientKitsMod.debugMessage("§cCannot find the kit '" + name + "' to preview.");
@@ -153,8 +162,8 @@ public class KitCommandManager {
                 return;
             }
             PlayerEntity player = tempSource.getSource().getPlayer();
-            PlayerInventory tempInv = new PlayerInventory(player, getEquipment(player.getInventory()));
-            tempInv.readData(getKitTypedListView(player, tempName));
+            PlayerInventory tempInv = new PlayerInventory(player, new EntityEquipment());
+            readInventory(getKitTypedListView(player, tempName), tempInv);
             List<Slot> slots = tempSource.getSource().getPlayer().playerScreenHandler.slots;
             for (int i = 0; i < slots.size(); i++) {
                 if (slots.get(i).inventory == tempSource.getSource().getPlayer().getInventory()) {
