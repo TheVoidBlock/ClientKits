@@ -89,7 +89,7 @@ public class KitCommandManager {
 
 
     void handleSaveCommand(CommandContext<FabricClientCommandSource> source, String name) {
-        NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY);
+        NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY, source.getSource().getRegistryManager());
         WriteView.ListAppender<StackWithSlot> list = view.getListAppender(name, StackWithSlot.CODEC);
         PlayerInventory inventory = source.getSource().getPlayer().getInventory();
         inventory.writeData(list);
